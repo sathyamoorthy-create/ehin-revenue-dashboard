@@ -17,7 +17,7 @@
   // Upload a new workbook any day to replace this with fresh figures.
   var EMBEDDED_DATA = null;
   var EMBEDDED_FILENAME = null;
-  window.BUILD_ID = "2026-09-28T09:35:33Z"; // updated on every publish; used to detect a newer live version
+  window.BUILD_ID = "2026-09-28T10:01:36Z"; // updated on every publish; used to detect a newer live version
   var GITHUB_OWNER = "sathyamoorthy-create";
   var GITHUB_REPO = "ehin-revenue-dashboard"; // this dashboard's own repo — "Publish to GitHub" pushes back here
 </script>
@@ -2059,6 +2059,18 @@
     var res = await fetch('https://api.github.com/repos/' + GITHUB_OWNER + '/' + GITHUB_REPO + '/contents/' + path, options);
     if (!res.ok){
       var body = await res.json().catch(function(){ return {}; });
+      if (res.status === 401){
+        // The saved token is wrong/expired — clear it so the next click re-prompts
+        // instead of silently retrying the same bad token forever.
+        localStorage.removeItem('ghPublishToken');
+        throw new Error('Bad credentials — that token was rejected and has been cleared. Click "Publish to GitHub" again to enter a new one.');
+      }
+      if (res.status === 403 && /rate limit/i.test(body.message || '')){
+        throw new Error('GitHub rate limit hit — wait a few minutes and try again.');
+      }
+      if (res.status === 404){
+        throw new Error('404 from GitHub — check the token has access to ' + GITHUB_OWNER + '/' + GITHUB_REPO + ' (repo scope, or repo added under a fine-grained token).');
+      }
       throw new Error(body.message || ('GitHub API error ' + res.status));
     }
     return res.json();
