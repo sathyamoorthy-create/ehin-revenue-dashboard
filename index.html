@@ -17,7 +17,7 @@
   // Upload a new workbook any day to replace this with fresh figures.
   var EMBEDDED_DATA = null;
   var EMBEDDED_FILENAME = null;
-  window.BUILD_ID = "2026-09-28T10:01:36Z"; // updated on every publish; used to detect a newer live version
+  window.BUILD_ID = "2026-09-28T10:34:05.677Z"; // updated on every publish; used to detect a newer live version
   var GITHUB_OWNER = "sathyamoorthy-create";
   var GITHUB_REPO = "ehin-revenue-dashboard"; // this dashboard's own repo — "Publish to GitHub" pushes back here
 </script>
@@ -2016,14 +2016,32 @@
   }
 
   function loadEmbedded(){
-    if (!EMBEDDED_DATA) return;
-    try{
-      var D = EMBEDDED_DATA;
-      D.dates = D.dates.map(function(v){ return v ? new Date(v) : null; });
-      showData(D, EMBEDDED_FILENAME, 'Loaded from last uploaded workbook — upload today\'s file to refresh');
-    }catch(err){
-      console.error(err);
+    // The numbers live in data.json, never inside this file. data.json is fetched with a
+    // cache-busting query string on every load, so neither the GitHub Pages CDN nor a
+    // browser cache can hand anyone stale figures. Everyone who opens this page, on any
+    // device, sees exactly the same data as soon as it is published.
+    function apply(D, filename, label){
+      try{
+        D.dates = D.dates.map(function(v){ return v ? new Date(v) : null; });
+        showData(D, filename, label);
+      }catch(err){ console.error(err); }
     }
+    function stamp(b){
+      try{ return new Date(b).toLocaleString("en-IN", {dateStyle:"medium", timeStyle:"short"}); }catch(e){ return b; }
+    }
+    window.__applyPayload = function(p){
+      window.BUILD_ID = p.build || window.BUILD_ID;
+      apply(p.data, p.filename, "Live data \u00b7 published " + stamp(p.build));
+    };
+    fetch("data.json?_=" + Date.now(), { cache: "no-store" })
+      .then(function(r){ return r.ok ? r.json() : null; })
+      .then(function(p){
+        if (p && p.data){ window.__applyPayload(p); }
+        else if (EMBEDDED_DATA){ apply(EMBEDDED_DATA, EMBEDDED_FILENAME, "Loaded from last uploaded workbook"); }
+      })
+      .catch(function(){
+        if (EMBEDDED_DATA){ apply(EMBEDDED_DATA, EMBEDDED_FILENAME, "Loaded from last uploaded workbook"); }
+      });
   }
 
   var uploadBtn = document.getElementById('uploadBtn');
@@ -2089,18 +2107,13 @@
     btn.disabled = true; btn.textContent = 'Publishing…';
     try{
       var buildId = new Date().toISOString();
-      var cur = await ghRequest('index.html');
-      var src = b64DecodeUnicode(cur.content);
-      var newSrc = src.replace(/var EMBEDDED_DATA = [\s\S]*?;\n\s*var EMBEDDED_FILENAME = .*?;\n\s*window\.BUILD_ID = .*?;[^\n]*\n/,
-        '  var EMBEDDED_DATA = ' + JSON.stringify(window.__lastD) + ';\n' +
-        '  var EMBEDDED_FILENAME = ' + JSON.stringify(window.__lastFilename) + ';\n' +
-        '  window.BUILD_ID = ' + JSON.stringify(buildId) + '; // updated on every publish; used to detect a newer live version\n');
-      if (newSrc === src){ throw new Error('Could not locate the data block to update — nothing was changed.'); }
-      src = newSrc;
-      await ghRequest('index.html', { method: 'PUT', body: JSON.stringify({ message: 'Update dashboard data — ' + window.__lastFilename, content: b64EncodeUnicode(src), sha: cur.sha, branch: 'main' }) });
+      var payload = { build: buildId, filename: window.__lastFilename, data: window.__lastD };
 
-      var curV = await ghRequest('version.json').catch(function(){ return null; });
-      await ghRequest('version.json', { method: 'PUT', body: JSON.stringify({ message: 'Bump version — ' + window.__lastFilename, content: b64EncodeUnicode(JSON.stringify({ build: buildId })), sha: curV ? curV.sha : undefined, branch: 'main' }) });
+      var curD = await ghRequest("data.json").catch(function(){ return null; });
+      await ghRequest("data.json", { method: "PUT", body: JSON.stringify({ message: "Update dashboard data - " + window.__lastFilename, content: b64EncodeUnicode(JSON.stringify(payload)), sha: curD ? curD.sha : undefined, branch: "main" }) });
+
+      var curV = await ghRequest("version.json").catch(function(){ return null; });
+      await ghRequest("version.json", { method: "PUT", body: JSON.stringify({ message: "Bump version - " + window.__lastFilename, content: b64EncodeUnicode(JSON.stringify({ build: buildId })), sha: curV ? curV.sha : undefined, branch: "main" }) });
 
       window.BUILD_ID = buildId;
       btn.textContent = 'Published ✓ (live in ~1 min)';
@@ -2131,13 +2144,15 @@
   // fetched with a cache-busting query string (bypasses the CDN cache) and compared
   // against the build id baked into this page; if they differ, a banner offers a reload.
   function checkForUpdate(){
-    if (!window.BUILD_ID) return;
-    fetch('version.json?_=' + Date.now(), { cache: 'no-store' })
+    fetch("data.json?_=" + Date.now(), { cache: "no-store" })
       .then(function(r){ return r.ok ? r.json() : null; })
-      .then(function(v){
-        if (v && v.build && v.build !== window.BUILD_ID){
-          var bar = document.getElementById('updateBar');
-          if (bar) bar.hidden = false;
+      .then(function(p){
+        if (p && p.build && p.build !== window.BUILD_ID && window.__applyPayload){
+          var bar = document.getElementById("updateBar");
+          if (bar){
+            bar.hidden = false;
+            bar.onclick = function(){ window.__applyPayload(p); bar.hidden = true; };
+          }
         }
       }).catch(function(){});
   }
